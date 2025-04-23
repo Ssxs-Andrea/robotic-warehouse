@@ -68,7 +68,7 @@ class ImageLayer(Enum):
     AGENT_LOAD = 4  # binary layer indicating agents with load
     GOALS = 5  # binary layer indicating goal/ delivery locations
     ACCESSIBLE = 6  # binary layer indicating accessible cells (all but occupied cells/ out of map)
-
+    CHARGING_STATIONS = 7 
 
 class Entity:
     def __init__(self, id_: int, x: int, y: int):
@@ -78,11 +78,18 @@ class Entity:
         self.x = x
         self.y = y
 
+# Add to the imports at the top
+class ChargeStation(Entity):
+    counter = 0
+    
+    def __init__(self, x, y):
+        ChargeStation.counter += 1
+        super().__init__(ChargeStation.counter, x, y)
 
 class Agent(Entity):
     counter = 0
 
-    def __init__(self, x: int, y: int, dir_: Direction, msg_bits: int):
+    def __init__(self, x: int, y: int, dir_: Direction, msg_bits: int, max_carry_weight=float('inf')):
         Agent.counter += 1
         super().__init__(Agent.counter, x, y)
         self.dir = dir_
@@ -91,6 +98,9 @@ class Agent(Entity):
         self.carrying_shelf: Optional[Shelf] = None
         self.canceled_action = None
         self.has_delivered = False
+        self.max_carry_weight = max_carry_weight
+        self.battery_level = 1000  # Start with full battery
+        self.is_charging = False
 
     @property
     def collision_layers(self):
@@ -98,6 +108,9 @@ class Agent(Entity):
             return (_LAYER_AGENTS, _LAYER_SHELFS)
         else:
             return (_LAYER_AGENTS,)
+    
+    def can_move(self):
+        return self.battery_level > 0 
 
     def req_location(self, grid_size) -> Tuple[int, int]:
         if self.req_action != Action.FORWARD:
@@ -128,9 +141,10 @@ class Agent(Entity):
 class Shelf(Entity):
     counter = 0
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, weight=1):
         Shelf.counter += 1
         super().__init__(Shelf.counter, x, y)
+        self.weight = weight
 
     @property
     def collision_layers(self):
@@ -167,6 +181,10 @@ class Warehouse(gym.Env):
         image_observation_directional: bool = True,
         normalised_coordinates: bool = False,
         render_mode: str = "human",
+        agent_capacities: Optional[List[int]] = None, 
+        shelf_weight_range: Tuple[int, int] = (1, 3), 
+        shelf_obstacle_prob: float = 0.1,
+        walkway_obstacle_prob: float = 0.0,
     ):
         """The robotic warehouse environment
 
@@ -233,6 +251,8 @@ class Warehouse(gym.Env):
         """
 
         self.goals: List[Tuple[int, int]] = []
+        self.shelf_obstacle_prob = shelf_obstacle_prob
+        self.walkway_obstacle_prob = walkway_obstacle_prob
 
         if not layout:
             self._make_layout_from_params(shelf_columns, shelf_rows, column_height)
@@ -245,6 +265,9 @@ class Warehouse(gym.Env):
         self.max_inactivity_steps: Optional[int] = max_inactivity_steps
         self.reward_type = reward_type
         self.reward_range = (0, 1)
+        # Store the new parameters
+        self.agent_capacities = agent_capacities if agent_capacities else [float('inf')] * n_agents
+        self.shelf_weight_range = shelf_weight_range
 
         self._cur_inactive_steps = None
         self._cur_steps = 0
@@ -263,6 +286,18 @@ class Warehouse(gym.Env):
         self.request_queue = []
 
         self.agents: List[Agent] = []
+
+        self.charge_stations: List[ChargeStation] = []
+        self.battery_capacity = 1000  # Max battery level
+        self.battery_consumption = {  # Battery used per action
+            Action.NOOP: 0,
+            Action.FORWARD: 2,
+            Action.LEFT: 1,
+            Action.RIGHT: 1,
+            Action.TOGGLE_LOAD: 2
+        }
+        self.charge_rate = 20  # Battery charged per step when at station
+
 
         # default values:
         self.fast_obs = None
@@ -306,6 +341,7 @@ class Warehouse(gym.Env):
         ]
 
         self.highways = np.zeros(self.grid_size, dtype=np.uint8)
+        self.obstacles = np.zeros(self.grid_size, dtype=np.uint8) 
 
         def highway_func(x, y):
             is_on_vertical_highway = x % 3 == 0
@@ -325,6 +361,25 @@ class Warehouse(gym.Env):
             for y in range(self.grid_size[0]):
                 self.highways[y, x] = int(highway_func(x, y))
 
+        # Then place obstacles, allowing some in walkways
+        for x in range(self.grid_size[1]):
+            for y in range(self.grid_size[0]):
+                # Don't place obstacles on goals
+                if (x, y) in self.goals:
+                    continue
+                    
+                # Determine if this is a shelf location (not on highway)
+                is_shelf_location = not highway_func(x, y)
+                
+                # Use different probabilities based on location type
+                obstacle_prob = (self.shelf_obstacle_prob if is_shelf_location 
+                                else self.walkway_obstacle_prob)
+                
+                if self.np_random.random() < obstacle_prob:
+                    self.obstacles[y, x] = 1
+                    if self.highways[y, x]:
+                        self.highways[y, x] = 0
+
     def _make_layout_from_str(self, layout):
         layout = layout.strip()
         layout = layout.replace(" ", "")
@@ -337,17 +392,26 @@ class Warehouse(gym.Env):
         self.grid_size = (grid_height, grid_width)
         self.grid = np.zeros((_COLLISION_LAYERS, *self.grid_size), dtype=np.int32)
         self.highways = np.zeros(self.grid_size, dtype=np.uint8)
+        self.obstacles = np.zeros(self.grid_size, dtype=np.uint8) 
 
         for y, line in enumerate(lines):
             for x, char in enumerate(line):
-                assert char.lower() in "gx."
+                assert char.lower() in "gx.o"
                 if char.lower() == "g":
                     self.goals.append((x, y))
                     self.highways[y, x] = 1
                 elif char.lower() == ".":
                     self.highways[y, x] = 1
+                elif char == "o":  # Obstacle
+                    self.obstacles[y, x] = 1
+                    # Mark obstacle positions as non-highway
+                    self.highways[y, x] = 0
 
         assert len(self.goals) >= 1, "At least one goal is required"
+
+    def _is_obstacle(self, x: int, y: int) -> bool:
+        """Check if a cell contains an obstacle"""
+        return self.obstacles[y, x] == 1
 
     def _use_image_obs(self, image_observation_layers, directional=True):
         """
@@ -464,6 +528,8 @@ class Warehouse(gym.Env):
                     "carrying_shelf": gym.spaces.MultiBinary(1),
                     "direction": gym.spaces.Discrete(4),
                     "on_highway": gym.spaces.MultiBinary(1),
+                    "battery_level": gym.spaces.Box(low=0, high=100, shape=(1,), dtype=np.float32),
+                    "at_charging_station": gym.spaces.MultiBinary(1),
                 }
             )
         )
@@ -566,6 +632,10 @@ class Warehouse(gym.Env):
                     layer = np.ones(self.grid_size, dtype=np.float32)
                     for ag in self.agents:
                         layer[ag.y, ag.x] = 0.0
+                elif layer_type == ImageLayer.CHARGING_STATIONS:
+                    layer = np.zeros(self.grid_size, dtype=np.float32)
+                    for station in self.charge_stations:
+                        layer[station.y, station.x] = 1.0
                 else:
                     raise ValueError(f"Unknown image layer type: {layer_type}")
 
@@ -687,6 +757,11 @@ class Warehouse(gym.Env):
             "carrying_shelf": [int(agent.carrying_shelf is not None)],
             "direction": agent.dir.value,
             "on_highway": [int(self._is_highway(agent.x, agent.y))],
+            "battery_level": [agent.battery_level / self.battery_capacity],  # Normalized
+            "at_charging_station": [int(any(
+                station.x == agent.x and station.y == agent.y 
+                for station in self.charge_stations
+            ))],
         }
         # --- sensor data
         obs["sensors"] = tuple({} for _ in range(self._obs_sensor_locations))
@@ -767,35 +842,66 @@ class Warehouse(gym.Env):
         # n_xshelf = (self.grid_size[1] - 1) // 3
         # n_yshelf = (self.grid_size[0] - 2) // 9
 
-        # make the shelfs
+        min_weight, max_weight = self.shelf_weight_range
         self.shelfs = [
-            Shelf(x, y)
+            Shelf(x, y, 
+                weight=self.np_random.integers(min_weight, max_weight + 1))
             for y, x in zip(
                 np.indices(self.grid_size)[0].reshape(-1),
                 np.indices(self.grid_size)[1].reshape(-1),
             )
-            if not self._is_highway(x, y)
+            if not self._is_highway(x, y) and not self._is_obstacle(x, y)
         ]
 
-        # spawn agents at random locations
-        agent_locs = self.np_random.choice(
-            np.arange(self.grid_size[0] * self.grid_size[1]),
+        # Add charging stations in non-obstacle positions
+        possible_station_locations = [
+            (0, 0),  # Top-left
+            (self.grid_size[1]-1, 0),  # Top-right
+            (0, self.grid_size[0]-1),  # Bottom-left
+            (self.grid_size[1]-1, self.grid_size[0]-1)  # Bottom-right
+        ]
+        self.charge_stations = [
+            ChargeStation(x, y) 
+            for x, y in possible_station_locations 
+            if not self._is_obstacle(x, y)
+        ]
+        # Create agents in non-obstacle positions
+        possible_agent_locations = [
+            (x, y)
+            for y in range(self.grid_size[0])
+            for x in range(self.grid_size[1])
+            if not self._is_obstacle(x, y)
+        ]
+
+        # Check if we have enough positions
+        if len(possible_agent_locations) < self.n_agents:
+            raise ValueError(f"Not enough non-obstacle positions ({len(possible_agent_locations)}) for {self.n_agents} agents")
+
+        # Select random positions directly from possible_agent_locations
+        selected_indices = self.np_random.choice(
+            len(possible_agent_locations),
             size=self.n_agents,
-            replace=False,
+            replace=False
         )
-        agent_locs = np.unravel_index(agent_locs, self.grid_size)
-        # and direction
+        agent_locs = [possible_agent_locations[i] for i in selected_indices]
+
+        # Get random directions for each agent
         agent_dirs = self.np_random.choice([d for d in Direction], size=self.n_agents)
+
+        # Create agents
         self.agents = [
-            Agent(x, y, dir_, self.msg_bits)
-            for y, x, dir_ in zip(*agent_locs, agent_dirs)
+            Agent(x, y, dir_, self.msg_bits, max_carry_weight=self.agent_capacities[i])
+            for i, ((x, y), dir_) in enumerate(zip(agent_locs, agent_dirs))
         ]
 
         self._recalc_grid()
 
+        # Only include non-obstacle shelves in request queue
+        valid_shelves = [s for s in self.shelfs if not self._is_obstacle(s.x, s.y)]
         self.request_queue = list(
             self.np_random.choice(
-                self.shelfs, size=self.request_queue_size, replace=False
+                valid_shelves, size=min(self.request_queue_size, len(valid_shelves)), 
+                replace=False
             )
         )
 
@@ -812,6 +918,24 @@ class Warehouse(gym.Env):
                 agent.message[:] = action[1:]
             else:
                 agent.req_action = Action(action)
+            
+            # Check if agent is at charging station
+            agent.is_charging = any(
+                station.x == agent.x and station.y == agent.y 
+                for station in self.charge_stations
+            )
+
+            if agent.is_charging:
+                # Charge the battery
+                agent.battery_level = min(
+                    self.battery_capacity,
+                    agent.battery_level + self.charge_rate
+                )
+                # Can't perform actions while charging
+                # agent.req_action = Action.NOOP
+            elif agent.battery_level <= 0:
+                # No battery - can't move
+                agent.req_action = Action.NOOP
 
         # # stationary agents will certainly stay where they are
         # stationary_agents = [agent for agent in self.agents if agent.action != Action.FORWARD]
@@ -823,8 +947,21 @@ class Warehouse(gym.Env):
         G = nx.DiGraph()
 
         for agent in self.agents:
+            
+
+            # Skip agents that can't move due to battery
+            if agent.battery_level <= 0 or not agent.can_move:
+                continue
+
             start = agent.x, agent.y
             target = agent.req_location(self.grid_size)
+
+            # Check if target position is an obstacle
+            target_x, target_y = target
+            if self._is_obstacle(target_x, target_y):
+                agent.req_action = Action.NOOP
+                G.add_edge(start, start)
+                continue
 
             if (
                 agent.carrying_shelf
@@ -872,30 +1009,48 @@ class Warehouse(gym.Env):
         failed_agents = set(self.agents) - commited_agents
 
         for agent in failed_agents:
-            assert agent.req_action == Action.FORWARD
             agent.req_action = Action.NOOP
-
         rewards = np.zeros(self.n_agents)
 
         for agent in self.agents:
+
+            # Consume battery for action (unless charging)
+            if not agent.is_charging and agent.req_action != Action.NOOP:
+                agent.battery_level = max(
+                    0, 
+                    agent.battery_level - self.battery_consumption[agent.req_action]
+                )
+
             agent.prev_x, agent.prev_y = agent.x, agent.y
 
             if agent.req_action == Action.FORWARD:
-                agent.x, agent.y = agent.req_location(self.grid_size)
-                if agent.carrying_shelf:
-                    agent.carrying_shelf.x, agent.carrying_shelf.y = agent.x, agent.y
+                target_x, target_y = agent.req_location(self.grid_size)
+                # Only move if target is not an obstacle
+                if not self._is_obstacle(target_x, target_y):
+                    agent.x, agent.y = target_x, target_y
+                    if agent.carrying_shelf:
+                        agent.carrying_shelf.x, agent.carrying_shelf.y = agent.x, agent.y
+                else:
+                    # Cancel movement if target is obstacle
+                    rewards[agent.id - 1] -= 0.1  # Small penalty for trying to move into obstacle
+                    agent.req_action = Action.NOOP
             elif agent.req_action in [Action.LEFT, Action.RIGHT]:
                 agent.dir = agent.req_direction()
             elif agent.req_action == Action.TOGGLE_LOAD and not agent.carrying_shelf:
                 shelf_id = self.grid[_LAYER_SHELFS, agent.y, agent.x]
                 if shelf_id:
-                    agent.carrying_shelf = self.shelfs[shelf_id - 1]
+                    shelf = self.shelfs[shelf_id - 1]
+                    if (shelf.weight <= agent.max_carry_weight and 
+                        not self._is_obstacle(agent.x, agent.y)):
+                        agent.carrying_shelf = shelf
+                    else:
+                        # Penalize for trying to pick up something too heavy or from obstacle
+                        rewards[agent.id - 1] -= 0.1
             elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf:
                 if not self._is_highway(agent.x, agent.y):
                     agent.carrying_shelf = None
                     if agent.has_delivered and self.reward_type == RewardType.TWO_STAGE:
                         rewards[agent.id - 1] += 0.5
-
                     agent.has_delivered = False
 
         self._recalc_grid()

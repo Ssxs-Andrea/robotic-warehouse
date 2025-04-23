@@ -54,6 +54,8 @@ _ORANGE = (255, 165, 0)
 _DARKORANGE = (255, 140, 0)
 _DARKSLATEBLUE = (72, 61, 139)
 _TEAL = (0, 128, 128)
+# Add to color constants at the top
+_OBSTACLE_COLOR = (128, 128, 128)  # Gray color for obstacles
 
 _BACKGROUND_COLOR = _WHITE
 _GRID_COLOR = _BLACK
@@ -63,7 +65,8 @@ _AGENT_COLOR = _DARKORANGE
 _AGENT_LOADED_COLOR = _RED
 _AGENT_DIR_COLOR = _BLACK
 _GOAL_COLOR = (60, 60, 60)
-
+# Add to color constants at the top
+_CHARGING_STATION_COLOR = (100, 149, 237)  # Cornflower blue
 _SHELF_PADDING = 2
 
 
@@ -127,6 +130,8 @@ class Viewer(object):
         self._draw_grid()
         self._draw_goals(env)
         self._draw_shelfs(env)
+        self._draw_obstacles(env)
+        self._draw_charging_stations(env)  # Add this line
         self._draw_agents(env)
 
         if return_rgb_array:
@@ -177,36 +182,153 @@ class Viewer(object):
             )
         batch.draw()
 
+    def _draw_charging_stations(self, env):
+        batch = pyglet.graphics.Batch()
+        
+        for station in env.charge_stations:
+            x, y = station.x, station.y
+            y = self.rows - y - 1  # pyglet rendering is reversed
+            
+            # Draw charging station (lightning bolt symbol)
+            glColor3ub(*_CHARGING_STATION_COLOR)
+            
+            # Draw a simple lightning bolt shape
+            center_x = (self.grid_size + 1) * x + (self.grid_size + 1) / 2
+            center_y = (self.grid_size + 1) * y + (self.grid_size + 1) / 2
+            size = self.grid_size / 3
+            
+            glBegin(GL_TRIANGLES)
+            # Top triangle
+            glVertex2f(center_x, center_y + size)
+            glVertex2f(center_x - size/2, center_y)
+            glVertex2f(center_x + size/2, center_y)
+            # Bottom triangle
+            glVertex2f(center_x, center_y - size)
+            glVertex2f(center_x - size/2, center_y)
+            glVertex2f(center_x + size/2, center_y)
+            glEnd()
+            
+            # Draw border
+            glColor3ub(*_BLACK)
+            glLineWidth(1)
+            glBegin(GL_LINE_LOOP)
+            glVertex2f(center_x, center_y + size)
+            glVertex2f(center_x - size/2, center_y)
+            glVertex2f(center_x, center_y - size)
+            glVertex2f(center_x + size/2, center_y)
+            glEnd()
+
+    def _draw_obstacles(self, env):
+        batch = pyglet.graphics.Batch()
+        
+        # Draw obstacles as solid rectangles
+        for y in range(env.obstacles.shape[0]):
+            for x in range(env.obstacles.shape[1]):
+                if env.obstacles[y, x]:
+                    # Convert to pyglet coordinates (y is inverted)
+                    pyglet_y = self.rows - y - 1
+                    
+                    batch.add(
+                        4,
+                        gl.GL_QUADS,
+                        None,
+                        (
+                            "v2f",
+                            (
+                                (self.grid_size + 1) * x + 1,  # TL - X
+                                (self.grid_size + 1) * pyglet_y + 1,  # TL - Y
+                                (self.grid_size + 1) * (x + 1),  # TR - X
+                                (self.grid_size + 1) * pyglet_y + 1,  # TR - Y
+                                (self.grid_size + 1) * (x + 1),  # BR - X
+                                (self.grid_size + 1) * (pyglet_y + 1),  # BR - Y
+                                (self.grid_size + 1) * x + 1,  # BL - X
+                                (self.grid_size + 1) * (pyglet_y + 1),  # BL - Y
+                            ),
+                        ),
+                        ("c3B", 4 * _OBSTACLE_COLOR),
+                    )
+        
+        batch.draw()
+        
+        # Draw obstacle borders
+        for y in range(env.obstacles.shape[0]):
+            for x in range(env.obstacles.shape[1]):
+                if env.obstacles[y, x]:
+                    pyglet_y = self.rows - y - 1
+                    
+                    glColor3ub(*_BLACK)
+                    glLineWidth(1)
+                    glBegin(GL_LINE_LOOP)
+                    glVertex2f((self.grid_size + 1) * x + 1,
+                            (self.grid_size + 1) * pyglet_y + 1)
+                    glVertex2f((self.grid_size + 1) * (x + 1),
+                            (self.grid_size + 1) * pyglet_y + 1)
+                    glVertex2f((self.grid_size + 1) * (x + 1),
+                            (self.grid_size + 1) * (pyglet_y + 1))
+                    glVertex2f((self.grid_size + 1) * x + 1,
+                            (self.grid_size + 1) * (pyglet_y + 1))
+                    glEnd()
+
     def _draw_shelfs(self, env):
         batch = pyglet.graphics.Batch()
 
         for shelf in env.shelfs:
             x, y = shelf.x, shelf.y
             y = self.rows - y - 1  # pyglet rendering is reversed
-            shelf_color = (
-                _SHELF_REQ_COLOR if shelf in env.request_queue else _SHELF_COLOR
-            )
+            shelf_color = _SHELF_REQ_COLOR if shelf in env.request_queue else _SHELF_COLOR
 
-            batch.add(
-                4,
-                gl.GL_QUADS,
-                None,
-                (
-                    "v2f",
-                    (
-                        (self.grid_size + 1) * x + _SHELF_PADDING + 1,  # TL - X
-                        (self.grid_size + 1) * y + _SHELF_PADDING + 1,  # TL - Y
-                        (self.grid_size + 1) * (x + 1) - _SHELF_PADDING,  # TR - X
-                        (self.grid_size + 1) * y + _SHELF_PADDING + 1,  # TR - Y
-                        (self.grid_size + 1) * (x + 1) - _SHELF_PADDING,  # BR - X
-                        (self.grid_size + 1) * (y + 1) - _SHELF_PADDING,  # BR - Y
-                        (self.grid_size + 1) * x + _SHELF_PADDING + 1,  # BL - X
-                        (self.grid_size + 1) * (y + 1) - _SHELF_PADDING,  # BL - Y
-                    ),
-                ),
-                ("c3B", 4 * shelf_color),
-            )
-        batch.draw()
+            # Draw the shelf (semi-transparent)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glColor4ub(*shelf_color, 180)  # 180/255 alpha for transparency
+            
+            glBegin(GL_QUADS)
+            glVertex2f((self.grid_size + 1) * x + _SHELF_PADDING + 1,
+                    (self.grid_size + 1) * y + _SHELF_PADDING + 1)
+            glVertex2f((self.grid_size + 1) * (x + 1) - _SHELF_PADDING,
+                    (self.grid_size + 1) * y + _SHELF_PADDING + 1)
+            glVertex2f((self.grid_size + 1) * (x + 1) - _SHELF_PADDING,
+                    (self.grid_size + 1) * (y + 1) - _SHELF_PADDING)
+            glVertex2f((self.grid_size + 1) * x + _SHELF_PADDING + 1,
+                    (self.grid_size + 1) * (y + 1) - _SHELF_PADDING)
+            glEnd()
+            glDisable(GL_BLEND)
+
+            # Draw weight number (only for shelves in request queue)
+            if shelf in env.request_queue:
+                label_x = x * (self.grid_size + 1) + (1/2) * (self.grid_size + 1)
+                label_y = y * (self.grid_size + 1) + (1/2) * (self.grid_size + 1)
+                
+                weight_label = pyglet.text.Label(
+                    str(shelf.weight),
+                    font_name="Arial",
+                    font_size=10,
+                    bold=True,
+                    x=label_x,
+                    y=label_y,
+                    anchor_x="center",
+                    anchor_y="center",
+                    color=(*_BLACK, 255),  # Plain black text
+                )
+                weight_label.draw()
+
+        # Draw shelf borders
+        for shelf in env.shelfs:
+            x, y = shelf.x, shelf.y
+            y = self.rows - y - 1
+            
+            glColor3ub(*_BLACK)
+            glLineWidth(1)
+            glBegin(GL_LINE_LOOP)
+            glVertex2f((self.grid_size + 1) * x + _SHELF_PADDING + 1,
+                    (self.grid_size + 1) * y + _SHELF_PADDING + 1)
+            glVertex2f((self.grid_size + 1) * (x + 1) - _SHELF_PADDING,
+                    (self.grid_size + 1) * y + _SHELF_PADDING + 1)
+            glVertex2f((self.grid_size + 1) * (x + 1) - _SHELF_PADDING,
+                    (self.grid_size + 1) * (y + 1) - _SHELF_PADDING)
+            glVertex2f((self.grid_size + 1) * x + _SHELF_PADDING + 1,
+                    (self.grid_size + 1) * (y + 1) - _SHELF_PADDING)
+            glEnd()
 
     def _draw_goals(self, env):
         batch = pyglet.graphics.Batch()
@@ -260,14 +382,61 @@ class Viewer(object):
         batch = pyglet.graphics.Batch()
 
         radius = self.grid_size / 3
-
         resolution = 6
 
         for agent in env.agents:
             col, row = agent.x, agent.y
             row = self.rows - row - 1  # pyglet rendering is reversed
 
-            # make a circle
+            # Calculate battery percentage and color (green to red gradient)
+            battery_pct = agent.battery_level / env.battery_capacity
+            r = int(255 * (1 - battery_pct))
+            g = int(255 * battery_pct)
+            battery_color = (r, g, 0)
+            
+            # Draw battery outline (below agent)
+            battery_width = self.grid_size / 2
+            battery_height = self.grid_size / 10
+            battery_x = (self.grid_size + 1) * col + (self.grid_size + 1 - battery_width) / 2
+            battery_y = (self.grid_size + 1) * row + self.grid_size / 10
+            
+            # Draw battery outline
+            glColor3ub(*_BLACK)
+            glLineWidth(1)
+            glBegin(GL_LINE_LOOP)
+            glVertex2f(battery_x, battery_y)
+            glVertex2f(battery_x + battery_width, battery_y)
+            glVertex2f(battery_x + battery_width, battery_y + battery_height)
+            glVertex2f(battery_x, battery_y + battery_height)
+            glEnd()
+            
+            # Draw battery positive terminal
+            terminal_width = battery_width / 6
+            terminal_height = battery_height / 2
+            glBegin(GL_QUADS)
+            glVertex2f(battery_x + battery_width, battery_y + (battery_height - terminal_height)/2)
+            glVertex2f(battery_x + battery_width + terminal_width, battery_y + (battery_height - terminal_height)/2)
+            glVertex2f(battery_x + battery_width + terminal_width, battery_y + (battery_height + terminal_height)/2)
+            glVertex2f(battery_x + battery_width, battery_y + (battery_height + terminal_height)/2)
+            glEnd()
+            
+            # Draw battery level fill
+            glColor3ub(*battery_color)
+            fill_width = max(1, (battery_width - 2) * battery_pct)  # -2 for padding
+            glBegin(GL_QUADS)
+            glVertex2f(battery_x + 1, battery_y + 1)
+            glVertex2f(battery_x + 1 + fill_width, battery_y + 1)
+            glVertex2f(battery_x + 1 + fill_width, battery_y + battery_height - 1)
+            glVertex2f(battery_x + 1, battery_y + battery_height - 1)
+            glEnd()
+
+            # Draw agent circle (change color if charging)
+            if agent.is_charging:
+                draw_color = _GREEN  # Green when charging
+            else:
+                draw_color = _AGENT_LOADED_COLOR if agent.carrying_shelf else _AGENT_COLOR
+
+            # make a circle for the agent
             verts = []
             for i in range(resolution):
                 angle = 2 * math.pi * i / resolution
@@ -285,12 +454,44 @@ class Viewer(object):
                 )
                 verts += [x, y]
             circle = pyglet.graphics.vertex_list(resolution, ("v2f", verts))
-
-            draw_color = _AGENT_LOADED_COLOR if agent.carrying_shelf else _AGENT_COLOR
-
             glColor3ub(*draw_color)
             circle.draw(GL_POLYGON)
 
+            # Add numeric battery percentage label
+            battery_label_x = col * (self.grid_size + 1) + (self.grid_size + 1) / 2
+            battery_label_y = row * (self.grid_size + 1) + self.grid_size / 5 + battery_height
+            
+            battery_label = pyglet.text.Label(
+                f"{int(agent.battery_level)}",
+                font_name="Arial",
+                font_size=8,
+                bold=True,
+                x=battery_label_x,
+                y=battery_label_y,
+                anchor_x="center",
+                anchor_y="center",
+                color=(*_BLACK, 255),
+            )
+            battery_label.draw()
+
+            # Add capacity label above agent
+            capacity_label_x = col * (self.grid_size + 1) + (self.grid_size + 1) / 2
+            capacity_label_y = row * (self.grid_size + 1) + 3 * (self.grid_size + 1) / 4
+            
+            capacity_label = pyglet.text.Label(
+                f"Cap:{agent.max_carry_weight}",
+                font_name="Arial",
+                font_size=8,
+                bold=True,
+                x=capacity_label_x,
+                y=capacity_label_y,
+                anchor_x="center",
+                anchor_y="center",
+                color=(*_BLACK, 255),
+            )
+            capacity_label.draw()
+
+        # Draw agent directions
         for agent in env.agents:
             col, row = agent.x, agent.y
             row = self.rows - row - 1  # pyglet rendering is reversed
