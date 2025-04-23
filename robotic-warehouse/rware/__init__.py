@@ -39,6 +39,41 @@ for size, diff, agents in _perms:
     )
 
 
+settings = [
+     # (id, agents, rows, cols, col_h, rq_size, weight_range)
+    ("rware-easy-1ag-v2", 1, 1, 3, 4, 2, (1, 3)), 
+    ("rware-easy-2ag-v2", 2, 2, 3, 2, 3, (1, 4)),
+    ("rware-med-2ag-v2", 2, 1, 5, 6, 2, (2, 5)),  
+    ("rware-med-3ag-v2", 3, 3, 5, 3, 4, (1, 6)),
+    ("rware-hard-5ag-v2", 5, 3, 7, 5, 6, (2, 6)),
+    ("rware-hard-7ag-v2", 6, 2, 7, 7, 7, (3, 8)),  
+]
+
+
+for env_id, agents, rows, cols, col_h, rq_size, weight_range in settings:
+    min_w, max_w = weight_range
+    # Ensure one agent can lift the heaviest shelf
+    capacities = [max_w] + [max(min_w, max_w - 1)] * (agents - 1)
+
+    register(
+        id=env_id,
+        entry_point="rware.warehouse:Warehouse",
+        kwargs={
+            "shelf_columns": cols,
+            "shelf_rows": rows,
+            "column_height": col_h,
+            "n_agents": agents,
+            "msg_bits": 0,
+            "sensor_range": 1,
+            "request_queue_size": rq_size,
+            "max_inactivity_steps": None,
+            "max_steps": None,
+            "reward_type": RewardType.GLOBAL,
+            "agent_capacities": capacities,
+            "shelf_weight_range": weight_range,
+        },
+    )
+
 def image_registration():
     _observation_type = {
         "": ObservationType.FLATTENED,
