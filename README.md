@@ -18,13 +18,15 @@
 ```bash
 # 1. Clone repository
 git clone https://github.com/Ssxs-Andrea/robotic-warehouse.git
-cd robotic-warehouse
+
 
 # 2. Setup environment
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 .\venv\Scripts\activate  # Windows
 
-# 3. Install core package
+# 3. Install core package and run
+cd robotic-warehouse
 cd robotic-warehouse
 pip install -e .
+cd ..
