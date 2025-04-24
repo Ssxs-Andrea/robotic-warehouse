@@ -40,20 +40,22 @@ for size, diff, agents in _perms:
 
 
 settings = [
-     # (id, agents, rows, cols, col_h, rq_size, weight_range)
-    ("rware-easy-1ag-v2", 1, 1, 3, 4, 2, (1, 3)), 
-    ("rware-easy-2ag-v2", 2, 2, 3, 2, 3, (1, 4)),
-    ("rware-med-2ag-v2", 2, 1, 5, 6, 2, (2, 5)),  
-    ("rware-med-3ag-v2", 3, 3, 5, 3, 4, (1, 6)),
-    ("rware-hard-5ag-v2", 5, 3, 7, 5, 6, (2, 6)),
-    ("rware-hard-7ag-v2", 6, 2, 7, 7, 7, (3, 8)),  
+    # (id, agents, rows, cols, col_h, rq_size, capacities, weight_range)
+
+    
+    ("rware-cond1-v2", 2, 2, 3, 3, 3, [4, 6], (4, 6)),
+    ("rware-cond2-v2", 2, 1, 3, 5, 3, [2, 4], (2, 4)),
+    ("rware-cond3-v2", 4, 1, 3, 7, 4, [4, 4, 4, 4], (3, 4)),
+    ("rware-cond4-v2", 2, 2, 3, 7, 4, [4, 4], (2, 4)),
+    ("rware-cond5-v2", 3, 2, 3, 3, 2, [4, 4, 4], (2, 4)),
+    
 ]
 
 
-for env_id, agents, rows, cols, col_h, rq_size, weight_range in settings:
-    min_w, max_w = weight_range
+for env_id, agents, rows, cols, col_h, rq_size, capacities, weight_range in settings:
+    # min_w, max_w = weight_range
     # Ensure one agent can lift the heaviest shelf
-    capacities = [max_w] + [max(min_w, max_w - 1)] * (agents - 1)
+    # capacities = [max_w] + [max(min_w, max_w - 1)] * (agents - 1)
 
     register(
         id=env_id,

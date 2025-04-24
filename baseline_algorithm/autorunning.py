@@ -7,12 +7,11 @@ import contextlib
 
 # Sample predefined environments
 settings = [
-    ("rware-easy-1ag-v2"),
-    ("rware-easy-2ag-v2"),
-    ("rware-med-2ag-v2"),
-    ("rware-med-3ag-v2"),
-    ("rware-hard-5ag-v2"),
-    ("rware-hard-7ag-v2"),
+    ("rware-cond1-v2"),
+    ("rware-cond2-v2"),
+    ("rware-cond3-v2"),
+    ("rware-cond4-v2"),
+    ("rware-cond5-v2"),
 ]
 
 stop_event = Event()
@@ -38,12 +37,12 @@ def run_simulation(env_name, log_queue):
                 break
             if controller.no_movement_steps > 100:  # 100 steps of no movement
                     print("\nEMERGENCY STOP: No agent has moved for 100 steps!")
-                    break   
+                    break
 
             actions = controller.get_actions()
             obs, rewards, done, truncated, info = env.step(actions)
-            #env.render()
-            #time.sleep(0.001)
+            # env.render()
+            # time.sleep(0.05)
 
             controller.current_step = step
             step += 1
