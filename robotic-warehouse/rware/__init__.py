@@ -42,7 +42,7 @@ for size, diff, agents in _perms:
 settings = [
     # (id, agents, rows, cols, col_h, rq_size, capacities, weight_range)
 
-    
+    ("rware-rl", 2, 2, 3, 2, 3, [4,4], (1, 4)),
     ("rware-cond1-v2", 2, 2, 3, 3, 3, [4, 6], (4, 6)),
     ("rware-cond2-v2", 2, 1, 3, 5, 3, [2, 4], (2, 4)),
     ("rware-cond3-v2", 4, 1, 3, 7, 4, [4, 4, 4, 4], (3, 4)),

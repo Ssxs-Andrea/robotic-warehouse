@@ -10,6 +10,7 @@ import time
 
 
 settings = [
+    "rware-rl",
     "rware-cond1-v2",
     "rware-cond2-v2",
     "rware-cond3-v2",
