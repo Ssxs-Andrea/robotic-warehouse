@@ -15,7 +15,6 @@ settings = [
     "rware-cond2-v2",
     "rware-cond3-v2",
     "rware-cond4-v2",
-    "rware-cond5-v2",
 ]
 
 stop_event = Event()
